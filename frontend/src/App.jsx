@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom'
 import Sidebar from './components/Sidebar'
 import Dashboard from './pages/Dashboard'
 import Settings from './pages/Settings'
+import Recommendations from './pages/Recommendations'
 
 export default function App() {
     return (
@@ -11,6 +12,7 @@ export default function App() {
                 <main className="main-content">
                     <Routes>
                         <Route path="/" element={<Dashboard />} />
+                        <Route path="/recommendations" element={<Recommendations />} />
                         <Route path="/settings" element={<Settings />} />
                     </Routes>
                 </main>
