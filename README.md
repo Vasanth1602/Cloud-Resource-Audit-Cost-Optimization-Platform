@@ -416,7 +416,6 @@ A `/health` endpoint confirms service availability. Scan session status transiti
 | Containerization | Docker (multi-stage builds for frontend, Python slim for backend) |
 | Reverse Proxy | Nginx (frontend → API proxy at `/api/v1`) |
 | Orchestration | Docker Compose (local), adaptable to ECS / Kubernetes |
-| CI/CD | GitHub Actions |
 
 ### AWS Services Used
 
@@ -673,14 +672,6 @@ CORS_ORIGINS=https://your-internal-domain.com
 - Consider a persistent backend store (PostgreSQL or DynamoDB) to replace the in-memory session store for multi-instance deployments
 - Configure `SCAN_REGIONS` to match the regions actively used by your organization
 
-### CI/CD Pipeline
-
-The `.github/workflows/` directory contains pipeline configuration covering:
-
-- Lint and test on pull request (`pytest`, `ruff`)
-- Docker image build and push to a container registry on merge to `main`
-- Environment-specific deployment via workflow dispatch
-
 ---
 
 ## 11. Project Structure
@@ -741,7 +732,6 @@ The `.github/workflows/` directory contains pipeline configuration covering:
 │
 ├── infra/                            # Infrastructure-as-code (extensible)
 ├── .env.example                      # Reference configuration with documentation
-├── .github/workflows/                # CI/CD pipeline definitions
 ├── docker-compose.yml
 └── Makefile                          # Developer workflow automation
 ```
