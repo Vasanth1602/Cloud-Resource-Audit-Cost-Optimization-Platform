@@ -19,9 +19,15 @@ from app.services.rules_engine.storage_rules import evaluate_storage_rules
 from app.services.scanner.ebs_scanner import scan_ebs
 from app.services.scanner.ec2_scanner import scan_ec2
 from app.services.scanner.eip_scanner import scan_eip
+from app.services.scanner.lb_scanner import scan_lb
+from app.services.scanner.nat_scanner import scan_nat
 from app.services.scanner.rds_scanner import scan_rds
 from app.services.scanner.s3_scanner import scan_s3
 from app.services.scanner.snapshot_scanner import scan_snapshots
+from app.services.rules_engine.lb_rules import evaluate_lb_rules
+from app.services.rules_engine.nat_rules import evaluate_nat_rules
+from app.services.rules_engine.rds_rules import evaluate_rds_rules
+from app.services.recommendations import generate_recommendations
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/scans", tags=["audit"])
@@ -33,6 +39,8 @@ SCANNERS = {
     "RDS":      scan_rds,
     "EIP":      scan_eip,
     "SNAPSHOT": scan_snapshots,
+    "LB":       scan_lb,
+    "NAT":      scan_nat,
 }
 
 
@@ -60,9 +68,15 @@ def _run_scan(scan_id: str, regions: list[str], resource_types: list[str]) -> No
                         r["scan_id"] = scan_id
                         r["id"] = str(uuid.uuid4())
 
-                        # Rules engine
+                        # Rules engine — dispatch by resource type
                         if rtype == "EC2":
                             violations = evaluate_ec2_rules(r)
+                        elif rtype == "RDS":
+                            violations = evaluate_rds_rules(r)
+                        elif rtype == "LB":
+                            violations = evaluate_lb_rules(r)
+                        elif rtype == "NAT":
+                            violations = evaluate_nat_rules(r)
                         else:
                             violations = evaluate_storage_rules(r)
 
@@ -101,6 +115,14 @@ def _run_scan(scan_id: str, regions: list[str], resource_types: list[str]) -> No
         except Exception as e:
             logger.warning(f"Cost data failed: {e}")
             store.scan_costs[scan_id] = []
+
+        # Recommendations — generated from all violations
+        try:
+            recs = generate_recommendations(scan_id, all_violations, all_resources)
+            store.scan_recommendations[scan_id] = recs
+        except Exception as e:
+            logger.warning(f"Recommendations generation failed: {e}")
+            store.scan_recommendations[scan_id] = []
 
         store.scan_resources[scan_id] = all_resources
         store.scan_violations[scan_id] = all_violations
@@ -227,10 +249,130 @@ async def get_scan_costs(scan_id: str):
 
     from app.services.cost_engine.cost_explorer import build_cost_summary
     cost_records = store.scan_costs.get(scan_id, [])
-    summary = build_cost_summary(cost_records) if cost_records else {}
+    violations = store.scan_violations.get(scan_id, [])
+    summary = build_cost_summary(cost_records, violations=violations) if cost_records else {}
     return {
         "scan_id": scan_id,
         "records": cost_records,
         "summary": summary,
     }
 
+
+@router.get("/{scan_id}/recommendations")
+async def get_scan_recommendations(scan_id: str, category: Optional[str] = None):
+    if scan_id not in store.scan_sessions:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    recs = store.scan_recommendations.get(scan_id, [])
+    if category:
+        recs = [r for r in recs if r.get("category", "").lower() == category.lower()]
+
+    total_savings = round(sum(r.get("estimated_monthly_savings", 0) for r in recs), 2)
+
+    return {
+        "scan_id": scan_id,
+        "total": len(recs),
+        "total_estimated_monthly_savings": total_savings,
+        "recommendations": recs,
+    }
+
+
+# ── Export Endpoints ──────────────────────────────────────────────────────────
+from fastapi.responses import StreamingResponse
+
+
+@router.get("/{scan_id}/export/violations.csv")
+async def export_violations_csv(scan_id: str):
+    """Download violations as a CSV file."""
+    if scan_id not in store.scan_sessions:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    from app.services.export_engine import violations_to_csv
+    violations = store.scan_violations.get(scan_id, [])
+    csv_content = violations_to_csv(violations)
+
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=violations-{scan_id[:8]}.csv",
+            "Content-Length": str(len(csv_content.encode("utf-8"))),
+        },
+    )
+
+
+@router.get("/{scan_id}/export/recommendations.csv")
+async def export_recommendations_csv(scan_id: str):
+    """Download recommendations as a CSV file."""
+    if scan_id not in store.scan_sessions:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    from app.services.export_engine import recommendations_to_csv
+    recs = store.scan_recommendations.get(scan_id, [])
+    csv_content = recommendations_to_csv(recs)
+
+    return StreamingResponse(
+        iter([csv_content]),
+        media_type="text/csv",
+        headers={
+            "Content-Disposition": f"attachment; filename=recommendations-{scan_id[:8]}.csv",
+            "Content-Length": str(len(csv_content.encode("utf-8"))),
+        },
+    )
+
+
+@router.get("/{scan_id}/export/report.json")
+async def export_full_json(scan_id: str):
+    """Download complete scan bundle as JSON."""
+    if scan_id not in store.scan_sessions:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    from app.services.export_engine import build_json_bundle
+    from app.services.cost_engine.cost_explorer import build_cost_summary
+
+    session = store.scan_sessions[scan_id]
+    resources = store.scan_resources.get(scan_id, [])
+    violations = store.scan_violations.get(scan_id, [])
+    cost_records = store.scan_costs.get(scan_id, [])
+    recs = store.scan_recommendations.get(scan_id, [])
+    cost_summary = build_cost_summary(cost_records, violations) if cost_records else {}
+
+    json_content = build_json_bundle(session, resources, violations, cost_summary, recs)
+
+    return StreamingResponse(
+        iter([json_content]),
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f"attachment; filename=scan-{scan_id[:8]}.json",
+            "Content-Length": str(len(json_content.encode("utf-8"))),
+        },
+    )
+
+
+@router.get("/{scan_id}/export/report.html")
+async def export_html_report(scan_id: str):
+    """
+    Return a self-contained, print-ready HTML report.
+    Open in browser then Ctrl+P / Save as PDF.
+    """
+    if scan_id not in store.scan_sessions:
+        raise HTTPException(status_code=404, detail="Scan not found")
+
+    from app.services.export_engine import build_html_report
+    from app.services.cost_engine.cost_explorer import build_cost_summary
+
+    session = store.scan_sessions[scan_id]
+    violations = store.scan_violations.get(scan_id, [])
+    cost_records = store.scan_costs.get(scan_id, [])
+    recs = store.scan_recommendations.get(scan_id, [])
+    cost_summary = build_cost_summary(cost_records, violations) if cost_records else {}
+
+    html_content = build_html_report(session, violations, cost_summary, recs)
+
+    return StreamingResponse(
+        iter([html_content]),
+        media_type="text/html",
+        headers={
+            "Content-Disposition": f"inline; filename=report-{scan_id[:8]}.html",
+        },
+    )

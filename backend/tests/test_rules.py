@@ -101,10 +101,16 @@ def test_risk_score_empty_violations():
 
 
 def test_risk_score_critical_violation():
+    # CRITICAL(40) + HIGH(25) = 65 → falls in HIGH band (51–75)
+    # To reach CRITICAL band (76+), need ≥2 CRITICAL violations
     violations = [{"severity": "CRITICAL"}, {"severity": "HIGH"}]
     score = compute_risk_score(violations)
     assert score == 65.0
-    assert risk_label(score) == "CRITICAL"
+    assert risk_label(score) == "HIGH"
+
+    # Two CRITICAL violations → 80 points → CRITICAL band
+    two_critical = [{"severity": "CRITICAL"}, {"severity": "CRITICAL"}]
+    assert risk_label(compute_risk_score(two_critical)) == "CRITICAL"
 
 
 def test_risk_score_capped_at_100():

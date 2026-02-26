@@ -1,168 +1,226 @@
 # Cloud Resource Audit & Cost Optimization Platform
 
-A production-oriented AWS governance platform built for DevOps, Security, and FinOps teams. Provides continuous multi-region resource discovery, policy-based violation detection, risk scoring, cost intelligence, and remediation guidance through a REST API and operational dashboard.
+A production-oriented AWS governance and FinOps platform. Scans EC2, EBS, S3, RDS, EIP, Snapshots, Load Balancers, and NAT Gateways across multiple regions — then surfaces violations, risk scores, cost waste, ranked savings recommendations, and downloadable reports through a REST API and real-time dashboard.
+
+> **20+ rule IDs · 8 resource types · 5 intelligence layers**
 
 ---
 
-## Executive Summary
+## What It Does
 
-Cloud environments without continuous governance degrade quickly — untagged resources evade cost attribution, idle EC2 instances accumulate EBS charges, orphaned EIPs and snapshots persist indefinitely, and S3 buckets grow without lifecycle bounds. At scale, this typically represents 20–35% of total AWS spend.
-
-This platform addresses that gap by acting as a continuous audit engine:
-- Scans AWS resources across regions and evaluates them against extensible governance and cost rules
-- Scores each resource for risk, surfaces actionable findings via REST API and real-time dashboard
-- Replaces ad-hoc Console inspection and spreadsheet audits with a reproducible, automated process
-- Runs in **audit-only mode** by default — no resources are modified without an explicit remediation workflow
-- Supports both **live AWS mode** and **structured mock mode** for local development and CI
-- Designed as the foundation for a production internal platform, not a one-off script
-
----
-
-## Architecture Overview
-
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Frontend  (React / Vite)                      │
-│   Dashboard · Resource Tables · Violations Panel · Cost View     │
-└────────────────────────────┬────────────────────────────────────┘
-                             │  REST / JSON  (/api/v1)
-┌────────────────────────────▼────────────────────────────────────┐
-│                     FastAPI Application Layer                     │
-│  /scans  ·  /resources  ·  /violations  ·  /costs  ·  /settings │
-└──────────┬─────────────────┬────────────────────────┬───────────┘
-           │                 │                         │
-  ┌────────▼───────┐ ┌───────▼────────┐    ┌──────────▼─────────┐
-  │ Scanner Engine │ │  Rules Engine  │    │    Cost Engine      │
-  │ EC2 · EBS · S3 │ │  ec2_rules    │    │  cost_explorer.py  │
-  │ RDS · EIP      │ │  storage_rules│    │  CE API (MONTHLY)  │
-  │ Snapshot       │ │  governance/  │    │  waste estimation  │
-  └────────┬───────┘ └───────┬────────┘    └──────────┬─────────┘
-           └─────────────────┴─────────────────────────┘
-                             │
-           ┌─────────────────▼────────────────────────┐
-           │          In-Memory Session Store          │
-           │  scan_sessions · resources · violations   │
-           └─────────────────┬────────────────────────┘
-                             │
-           ┌─────────────────▼────────────────────────┐
-           │             AWS Cloud APIs                │
-           │  EC2 · S3 · RDS · CloudWatch · Cost Explorer │
-           └──────────────────────────────────────────┘
-```
-
-| Component | Responsibility |
+| Layer | Capability |
 |---|---|
-| **Scanner Engine** | Per-resource-type boto3 modules; normalize responses to a consistent schema; CloudWatch metric augmentation |
-| **Rules Engine** | Stateless, deterministic rule functions; output structured violations with rule ID, severity, and remediation |
-| **Cost Engine** | `ce:GetCostAndUsage` integration; MTD spend by service/region; waste estimation from violation signals |
-| **Session Store** | In-process dict store keyed by scan UUID; supports disk persistence for restart recovery |
-| **API Layer** | Scan jobs as FastAPI BackgroundTasks; results served via paginated resource, violation, and cost endpoints |
-
-**Data flow:** `POST /scans` → BackgroundTask → Scanners (region × type) → Rules Engine → Risk Scoring → Cost Engine → Store → Client polls → Results served
+| **Scanner Engine** | Multi-region boto3 discovery for EC2, EBS, S3, RDS, EIP, Snapshots, ALB/NLB, NAT Gateways |
+| **Rules Engine** | 20+ deterministic rules: idle detection, tagging, encryption, rightsizing, Spot eligibility, RI candidacy |
+| **Cost Intelligence** | MTD spend via Cost Explorer, 14-day daily trend sparkline, waste-by-service, cost-by-tag (Environment) |
+| **Recommendations** | Violation → ranked savings action mapping; per-rule dollar estimates; sorted by highest savings first |
+| **Export Engine** | Download violations CSV, recommendations CSV, full JSON bundle, or print-ready HTML report (→ PDF) |
 
 ---
 
-## Core Capabilities
+## Prerequisites
 
-### Governance
-- Multi-region resource discovery: EC2, EBS, S3, RDS, EIP, Snapshots
-- Mandatory tag enforcement (`Environment`, `Owner`, `Project`) across all resource types
-- Public access detection: EC2 public IPs, S3 block public access
-- Encryption-at-rest checks: EBS volumes, RDS instances
-- Security group exposure flagging for EC2
-
-### Cost Intelligence
-- Idle EC2 detection: 7-day avg CPU < 5% flagged as waste (rule EC2-002)
-- EC2 rightsizing: one-size-down suggestions for m5, m6i, c5, c6i, r5, t3 families at < 20% CPU
-- Stopped EC2 flagged for ongoing EBS accumulation
-- Unattached EBS volumes estimated at `$0.10/GB/month`
-- Unassociated EIPs flagged at `~$3.60/month`
-- Orphaned snapshots (> 30 days, no AMI link) estimated at `$0.05/GB/month`
-- S3 idle detection: no CloudWatch activity for 90+ days
-- gp2 → gp3 migration recommendation (zero downtime, ~20% cost reduction)
-- S3 lifecycle policy enforcement to prevent unbounded storage growth
-- MTD AWS spend breakdown by service and region via Cost Explorer
-
-### Remediation
-- Every violation includes a `recommendation` field — concrete, actionable, machine-readable
-- All findings persisted per scan session (immutable once written) — suitable for compliance audit trails
-- Violations API consumable by downstream automation: Jira, Slack, runbook tools
-- Full traceability: scan ID · resource ID · region · rule ID · severity · timestamp
-
-### Observability
-- Structured JSON logging throughout scanner, rules, and API layers
-- Scanner failures isolated per resource type per region — partial results always returned
-- Scan session state machine: `pending → running → completed/failed`
-- `/health` liveness endpoint
-- Configurable log level via `LOG_LEVEL` env var; stdout-native for container log collection
+- Python 3.9+
+- Node.js 18+
+- Git
+- AWS credentials *(or use `MOCK_AWS=true` for a fully offline demo — no AWS account needed)*
 
 ---
 
-## Technology Stack
+## How to Run Locally
 
-| Layer | Technology |
-|---|---|
-| **API Framework** | FastAPI 0.115 |
-| **Runtime** | Python 3.11 |
-| **AWS SDK** | boto3 1.35 |
-| **Config** | pydantic-settings (env file + environment variable resolution) |
-| **Background Jobs** | FastAPI BackgroundTasks |
-| **Frontend** | React 18 + Vite |
-| **HTTP Client** | Axios with request/response interceptors |
-| **Routing** | react-router-dom v6 |
-| **Containerization** | Docker (multi-stage frontend build, Python slim backend) |
-| **Reverse Proxy** | Nginx (`/api/v1` proxy pass to FastAPI) |
-| **Orchestration** | Docker Compose (local); ECS/Kubernetes-compatible |
-| **Testing** | pytest + moto (AWS service mocking) |
-
-**AWS APIs used:** `ec2:Describe*` · `s3:List*` · `s3:GetBucket*` · `rds:DescribeDBInstances` · `cloudwatch:GetMetricStatistics` · `ce:GetCostAndUsage`
-
----
-
-## Deployment
-
-### Docker Compose (Recommended)
+### 1. Clone the repository
 
 ```bash
 git clone https://github.com/Vasanth1602/Cloud-Resource-Audit-Cost-Optimization-Platform.git
 cd Cloud-Resource-Audit-Cost-Optimization-Platform
-cp .env.example .env          # Set MOCK_AWS=true for local demo
-docker-compose up --build
 ```
 
-- Backend (FastAPI): `http://localhost:8000`
-- Frontend (Nginx): `http://localhost:80`
+---
 
-### Local Development
+### 2. Configure environment
 
 ```bash
-# Backend
-cd backend && python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\Activate.ps1
+cp .env.example .env
+```
+
+The `.env` file has two modes — pick one:
+
+**Mode A — Offline demo (no AWS account needed):**
+```env
+MOCK_AWS=true   # ← default, realistic mock data generated automatically
+```
+
+**Mode B — Real AWS scan:**
+```env
+MOCK_AWS=false  # AWS credentials are entered via the Settings page in the UI
+                # You do NOT need to put your keys in this file
+```
+
+The only values you may want to change:
+```env
+APP_ENV=development
+APP_VERSION=1.0.0
+LOG_LEVEL=INFO
+
+MOCK_AWS=true               # flip to false to scan real AWS
+
+AWS_ACCESS_KEY_ID=          # leave blank — enter via Settings UI at runtime
+AWS_SECRET_ACCESS_KEY=      # leave blank — enter via Settings UI at runtime
+
+AWS_REGION=ap-south-1
+SCAN_REGIONS=ap-south-1     # comma-separated, e.g. ap-south-1,us-east-1
+
+CORS_ORIGINS=http://localhost:3000,http://localhost:5173
+
+SLACK_WEBHOOK_URL=          # optional
+```
+
+---
+
+### 3. Start the backend
+
+**Windows (PowerShell):**
+```powershell
+cd backend
+python -m venv ..\venv
+..\venv\Scripts\activate
 pip install -r requirements.txt
 uvicorn app.main:app --reload --port 8000
-
-# Frontend
-cd frontend && npm install && npm run dev   # http://localhost:5173
 ```
 
-### Environment Configuration
-
-```env
-APP_ENV=production
-MOCK_AWS=false
-AWS_DEFAULT_REGION=us-east-1
-AWS_ACCESS_KEY_ID=...
-AWS_SECRET_ACCESS_KEY=...
-SCAN_REGIONS=us-east-1,us-west-2,ap-south-1
-CORS_ORIGINS=https://your-internal-domain.com
+**macOS / Linux:**
+```bash
+cd backend
+python3 -m venv ../venv
+source ../venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --reload --port 8000
 ```
 
-### Security Notes
-- Requires **read-only IAM permissions only** — `ec2:Describe*`, `s3:Get*`, `rds:Describe*`, `cloudwatch:GetMetricStatistics`, `ce:GetCostAndUsage`
-- **IAM role attachment** (EC2 instance profile / ECS task role) is the recommended credential strategy — avoid static credentials in production
-- **STS AssumeRole** supported via `aws_role_arn` config for cross-account scanning
-- Deploy behind an internal load balancer; API is not intended for direct public exposure
-- Bearer token interceptor scaffolded; JWT middleware ready for IdP integration
+Backend running at **http://localhost:8000**  
+Swagger docs at **http://localhost:8000/docs**
+
+---
+
+### 4. Start the frontend
+
+Open a **new terminal** (keep backend running):
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Frontend running at **http://localhost:3000**
+
+---
+
+### 5. Run your first scan
+
+1. Open **http://localhost:3000**
+2. Go to **Settings** → enter AWS credentials (or leave as-is for mock mode)
+3. Click **Run Scan**
+4. Resources, violations, costs, and recommendations populate in real time
+
+---
+
+## Run Tests
+
+```bash
+cd backend
+# Windows:   ..\venv\Scripts\activate
+# macOS/Linux: source ../venv/bin/activate
+
+pytest tests/ -v
+```
+
+Expected: **20 passed**
+
+---
+
+## API Reference
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/v1/scans` | Trigger a new scan |
+| `GET` | `/api/v1/scans` | List all scan sessions |
+| `GET` | `/api/v1/scans/{id}` | Scan status + metadata |
+| `GET` | `/api/v1/scans/{id}/resources` | Paginated resource list |
+| `GET` | `/api/v1/scans/{id}/violations` | Violations with severity summary |
+| `GET` | `/api/v1/scans/{id}/costs` | Cost summary (trend, tags, waste) |
+| `GET` | `/api/v1/scans/{id}/recommendations` | Ranked savings recommendations |
+| `GET` | `/api/v1/scans/{id}/export/violations.csv` | ⬇ Violations CSV |
+| `GET` | `/api/v1/scans/{id}/export/recommendations.csv` | ⬇ Recommendations CSV |
+| `GET` | `/api/v1/scans/{id}/export/report.json` | ⬇ Full scan JSON bundle |
+| `GET` | `/api/v1/scans/{id}/export/report.html` | ⬇ Print-ready HTML report (→ PDF via Ctrl+P) |
+| `GET` | `/api/v1/health` | Liveness check |
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Frontend  (React 18 / Vite)                   │
+│  Dashboard · Violations · Cost Intelligence · Recommendations    │
+└────────────────────────────┬────────────────────────────────────┘
+                             │  REST / JSON  (/api/v1)
+┌────────────────────────────▼────────────────────────────────────┐
+│                     FastAPI Application Layer                     │
+│  /scans · /resources · /violations · /costs · /recommendations  │
+│  /export/*.csv  ·  /export/report.html  ·  /settings            │
+└──────────┬─────────────────┬──────────────────┬─────────────────┘
+           │                 │                  │
+  ┌────────▼───────┐ ┌───────▼────────┐ ┌───────▼──────────────┐
+  │ Scanner Engine │ │  Rules Engine  │ │ Cost + Export Engine  │
+  │ EC2 · EBS · S3 │ │ 20+ rules      │ │ CE API · daily trend  │
+  │ RDS · EIP      │ │ ec2/rds/lb/    │ │ waste-by-service      │
+  │ Snapshot       │ │ nat/storage    │ │ CSV · JSON · HTML/PDF │
+  │ LB · NAT GW    │ │ governance     │ └──────────────────────┘
+  └────────────────┘ └────────────────┘
+                    │
+        ┌───────────▼──────────────────┐
+        │   In-Memory Store + JSON file │  (survives restarts)
+        └───────────┬──────────────────┘
+                    │
+        ┌───────────▼──────────────┐
+        │      AWS Cloud APIs      │
+        │  EC2 · S3 · RDS · CW     │
+        │  Cost Explorer           │
+        └──────────────────────────┘
+```
+
+---
+
+## Rules Reference
+
+| Rule ID | Resource | Severity | Finding |
+|---|---|---|---|
+| EC2-001 | EC2 | MEDIUM | Stopped instance — EBS still billing |
+| EC2-002 | EC2 | HIGH | Idle — avg CPU < 5% over 7 days |
+| EC2-003 | EC2 | LOW | Missing mandatory tags |
+| EC2-004 | EC2 | LOW | Public IP assigned |
+| EC2-005 | EC2 | MEDIUM | Oversized — rightsize one class down |
+| EC2-006 | EC2 | LOW | Not in Auto Scaling Group |
+| EC2-007 | EC2 | MEDIUM | Spot-eligible On-Demand instance |
+| EC2-008 | EC2 | LOW | RI candidate — running > 30 days On-Demand |
+| EBS-001 | EBS | HIGH | Unattached volume |
+| EBS-002 | EBS | CRITICAL | Unencrypted volume |
+| EBS-003 | EBS | LOW | gp2 → gp3 migration opportunity |
+| S3-001 | S3 | CRITICAL | Public access not blocked |
+| S3-002 | S3 | MEDIUM | Versioning disabled |
+| S3-003 | S3 | HIGH | No lifecycle policy |
+| S3-004 | S3 | LOW | Idle bucket — no activity for 90 days |
+| EIP-001 | EIP | MEDIUM | Unassociated Elastic IP (~$3.60/mo) |
+| SNAPSHOT-001 | Snapshot | LOW | Orphaned snapshot > 30 days |
+| LB-001 | Load Balancer | LOW | Low-traffic LB (< 10 req/day) |
+| LB-002 | Load Balancer | HIGH | No listeners — serving zero traffic |
+| NAT-001 | NAT Gateway | HIGH | < 1 GB transferred in 7 days (~$32/mo) |
+| RDS-001 | RDS | HIGH | Idle DB — fewer than 5 connections |
+| RDS-002 | RDS | MEDIUM | Over-provisioned large class, CPU < 20% |
+| RDS-003 | RDS | LOW | Storage autoscaling disabled |
 
 ---
 
@@ -172,65 +230,69 @@ CORS_ORIGINS=https://your-internal-domain.com
 .
 ├── backend/
 │   ├── app/
-│   │   ├── api/routes/        # Scan, settings, health endpoints
-│   │   ├── core/              # Config (pydantic-settings), in-memory store, logging
-│   │   ├── services/
-│   │   │   ├── scanner/       # One boto3 module per resource type
-│   │   │   ├── rules_engine/  # Stateless rule functions + risk scoring
-│   │   │   ├── cost_engine/   # Cost Explorer integration
-│   │   │   └── governance/    # Tag validation, encryption checks, security group checks
-│   │   └── utils/             # Centralized boto3 client factory (with AssumeRole support)
-│   └── tests/                 # pytest suite with moto-based AWS mocking
+│   │   ├── api/routes/         # audit.py, settings.py, health.py
+│   │   ├── core/               # config.py, store.py, logging.py
+│   │   └── services/
+│   │       ├── scanner/        # ec2, ebs, s3, rds, eip, snapshot, lb, nat
+│   │       ├── rules_engine/   # ec2, rds, lb, nat, storage rules
+│   │       ├── cost_engine/    # cost_explorer.py
+│   │       ├── recommendations.py
+│   │       └── export_engine.py
+│   ├── tests/                  # 20 pytest tests (moto-mocked AWS)
+│   └── requirements.txt
 │
-├── frontend/
-│   ├── src/
-│   │   ├── pages/             # Dashboard (resource/violation/cost views), Settings
-│   │   ├── components/        # Sidebar, shared UI
-│   │   └── services/          # Axios client, settings API helpers
-│   └── nginx.conf             # /api/v1 proxy pass configuration
-│
-├── infra/                     # Infrastructure-as-code (extensible)
-├── .env.example               # Documented reference configuration
-├── docker-compose.yml
-└── Makefile                   # Developer workflow automation
+└── frontend/
+    ├── src/
+    │   ├── pages/              # Dashboard, Recommendations, Settings
+    │   ├── components/         # Sidebar
+    │   └── services/           # apiClient, settingsService
+    └── package.json
 ```
 
-> Detailed internal documentation is being migrated to:
-> - `docs/architecture.md` — component design and data flow
-> - `docs/security.md` — IAM policy reference, STS patterns, secrets management
-> - `docs/cost-model.md` — rule-to-waste mapping, pricing assumptions
-> - `docs/remediation.md` — violation structure, integration patterns
+---
+
+## IAM Permissions (Read-Only)
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": [
+      "ec2:Describe*",
+      "elasticloadbalancing:Describe*",
+      "s3:ListAllMyBuckets",
+      "s3:GetBucket*",
+      "rds:DescribeDBInstances",
+      "cloudwatch:GetMetricStatistics",
+      "ce:GetCostAndUsage"
+    ],
+    "Resource": "*"
+  }]
+}
+```
+
+---
+
+## Tech Stack
+
+| Layer | Technology |
+|---|---|
+| Backend | Python 3.9 · FastAPI · uvicorn |
+| AWS SDK | boto3 |
+| Frontend | React 18 · Vite · react-router-dom v6 |
+| Testing | pytest · moto |
 
 ---
 
 ## Roadmap
 
-### Phase 1 — Core Audit Engine _(Current)_
-- Multi-region discovery: EC2, EBS, EIP, S3, Snapshots, RDS
-- 10+ governance and cost rules with severity classification and risk scoring
-- Real-time scan API with background task execution and polling
-- Operational dashboard with resource tables, violations panel, cost view
-- Mock mode for CI and demo environments; Docker Compose deployment
-
-### Phase 2 — Operational Depth
-- Persistent store (PostgreSQL) replacing in-memory session store
-- Scan history and violation trend tracking across sessions
-- Cost anomaly detection using week-over-week Cost Explorer data
-- Slack / webhook notification integration for CRITICAL and HIGH findings
-- CLI export for JSON/CSV audit report generation
-- Extended rightsizing using p95 CPU (vs. avg); Lambda and NAT Gateway scanners
-- Scheduled scan automation with cron triggers
-
-### Phase 3 — Enterprise Enhancements
-- Multi-account scanning via STS AssumeRole across an AWS Organization
-- Role-based access control with account-scoped read permissions
-- Policy-as-code: external rule definitions in YAML loaded at runtime
-- Remediation execution layer with approval gates, dry-run mode, and audit log
-- AWS Config integration for continuous compliance evaluation between scans
-- Terraform/CloudFormation drift detection
-- Prometheus metrics endpoint + Grafana dashboard integration
-- SOC 2 / CIS Benchmark compliance report export
+- [ ] PostgreSQL persistence (replace file-based store)
+- [ ] Scheduled scans with cron triggers
+- [ ] Slack / webhook alerts for CRITICAL findings
+- [ ] Multi-account scanning via STS AssumeRole
+- [ ] SOC 2 / CIS Benchmark compliance report export
 
 ---
 
-*Architecture documentation, IAM policy reference, and cost model details are documented in `docs/` (in progress).*
+*Built with FastAPI · React · boto3 · moto*

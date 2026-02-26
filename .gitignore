@@ -25,10 +25,8 @@ htmlcov/
 node_modules/
 frontend/dist/
 frontend/.vite/
-*.lock
-
-# ── Docker ────────────────────────────────────────────────────
-*.env.local
+yarn.lock
+pnpm-lock.yaml
 
 # ── Environment (NEVER commit real secrets) ───────────────────
 .env
@@ -54,3 +52,6 @@ infra/terraform/*.tfvars
 # ── Runtime data (scan sessions, local store) ─────────────────
 scan_data.json
 *.scan.json
+
+# ── Test output ───────────────────────────────────────────────
+test_out.txt

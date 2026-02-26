@@ -23,12 +23,13 @@ scan_sessions: dict[str, dict[str, Any]] = {}
 scan_resources: dict[str, list[dict[str, Any]]] = {}
 scan_violations: dict[str, list[dict[str, Any]]] = {}
 scan_costs: dict[str, list[dict[str, Any]]] = {}
+scan_recommendations: dict[str, list[dict[str, Any]]] = {}
 remediation_logs: list[dict[str, Any]] = []
 
 
 def _load() -> None:
     """Load persisted data from JSON file on startup."""
-    global scan_sessions, scan_resources, scan_violations, scan_costs, remediation_logs
+    global scan_sessions, scan_resources, scan_violations, scan_costs, scan_recommendations, remediation_logs
     if not _DATA_FILE.exists():
         return
     try:
@@ -38,6 +39,7 @@ def _load() -> None:
         scan_resources.update(data.get("scan_resources", {}))
         scan_violations.update(data.get("scan_violations", {}))
         scan_costs.update(data.get("scan_costs", {}))
+        scan_recommendations.update(data.get("scan_recommendations", {}))
         remediation_logs.extend(data.get("remediation_logs", []))
         logger.info(f"Loaded {len(scan_sessions)} scan(s) from {_DATA_FILE}")
     except Exception as e:
@@ -54,6 +56,7 @@ def save() -> None:
                 "scan_resources": scan_resources,
                 "scan_violations": scan_violations,
                 "scan_costs": scan_costs,
+                "scan_recommendations": scan_recommendations,
                 "remediation_logs": remediation_logs,
             }
             with open(_DATA_FILE, "w", encoding="utf-8") as f:
@@ -69,6 +72,7 @@ def clear_all() -> None:
         scan_resources.clear()
         scan_violations.clear()
         scan_costs.clear()
+        scan_recommendations.clear()
         remediation_logs.clear()
         if _DATA_FILE.exists():
             _DATA_FILE.unlink()

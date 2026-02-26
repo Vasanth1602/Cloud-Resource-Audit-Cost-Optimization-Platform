@@ -22,6 +22,15 @@ _RIGHTSIZE_MAP = {
     "t3.xlarge":   "t3.large",
 }
 
+# Instance families that are strongly Spot-eligible (stateless / fault-tolerant)
+_SPOT_ELIGIBLE_FAMILIES = {
+    "t3", "t3a", "t4g", "m5", "m5a", "m6i", "m6a",
+    "c5", "c5a", "c6i", "c6a", "r5", "r5a", "r6i",
+}
+
+# Families with strong Reserved Instance savings (predictable, long-running)
+_RI_CANDIDATE_FAMILIES = {"m5", "m6i", "c5", "c6i", "r5", "r6i", "t3"}
+
 
 def evaluate_ec2_rules(resource: dict[str, Any]) -> list[dict[str, Any]]:
     """
@@ -100,6 +109,77 @@ def evaluate_ec2_rules(resource: dict[str, Any]) -> list[dict[str, Any]]:
                 f"{avg_cpu:.1f}% avg CPU — likely oversized."
             ),
             "recommendation": f"Consider rightsizing from {itype} to {suggested} (estimated ~50% cost saving).",
+            "compliance_framework": "FinOps",
+            "resource_id": resource["resource_id"],
+            "resource_type": "EC2",
+            "region": resource["region"],
+        })
+
+    # Rule EC2-006: Not in an Auto Scaling Group
+    # Standalone On-Demand instances have no automatic recovery or scale-in,
+    # increasing cost risk during idle periods.
+    in_asg = raw.get("in_asg", False)
+    if state == "running" and not in_asg:
+        violations.append({
+            "rule_id": "EC2-006",
+            "severity": "LOW",
+            "message": (
+                f"EC2 instance {resource['resource_id']} ({itype or 'unknown type'}) "
+                "is running outside an Auto Scaling Group."
+            ),
+            "recommendation": (
+                "Consider migrating to an ASG for automatic recovery, scale-in during low demand, "
+                "and Spot/Mixed capacity support."
+            ),
+            "compliance_framework": "FinOps",
+            "resource_id": resource["resource_id"],
+            "resource_type": "EC2",
+            "region": resource["region"],
+        })
+
+    # Rule EC2-007: Spot-eligible instance running On-Demand with low CPU
+    # Spot can save 60–90% for fault-tolerant, stateless workloads.
+    spot_eligible = raw.get("spot_eligible", False)
+    instance_family = itype.split(".")[0] if itype else ""
+    if (
+        state == "running"
+        and spot_eligible
+        and not in_asg  # ASG can manage Spot natively — flag only standalone instances
+        and avg_cpu < 40.0
+    ):
+        violations.append({
+            "rule_id": "EC2-007",
+            "severity": "MEDIUM",
+            "message": (
+                f"EC2 instance {resource['resource_id']} is a {itype} ({avg_cpu:.1f}% avg CPU) "
+                "eligible for Spot pricing but running as On-Demand."
+            ),
+            "recommendation": (
+                f"Migrate to a Spot instance or use an ASG with Spot/On-Demand mix. "
+                f"Spot pricing for {instance_family} typically saves 60–70% vs On-Demand."
+            ),
+            "compliance_framework": "FinOps",
+            "resource_id": resource["resource_id"],
+            "resource_type": "EC2",
+            "region": resource["region"],
+        })
+
+    # Rule EC2-008: Reserved Instance candidate
+    # Running > 30 days continuously on an RI-eligible family → strong RI signal.
+    ri_candidate = raw.get("ri_candidate", False)
+    launch_days = raw.get("launch_days_ago", 0)
+    if state == "running" and ri_candidate and instance_family in _RI_CANDIDATE_FAMILIES:
+        violations.append({
+            "rule_id": "EC2-008",
+            "severity": "LOW",
+            "message": (
+                f"EC2 instance {resource['resource_id']} ({itype}) has been running for "
+                f"{launch_days} days as On-Demand. It is a strong Reserved Instance candidate."
+            ),
+            "recommendation": (
+                f"Purchase a 1-year Convertible RI for {itype} to save ~30–40% vs On-Demand. "
+                "Use AWS Cost Explorer RI recommendations for exact pricing."
+            ),
             "compliance_framework": "FinOps",
             "resource_id": resource["resource_id"],
             "resource_type": "EC2",
