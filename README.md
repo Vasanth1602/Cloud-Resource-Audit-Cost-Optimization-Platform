@@ -117,6 +117,7 @@ source venv/bin/activate
 venv\Scripts\Activate.ps1
 
 # Install dependencies
+# requirements.txt lives inside backend/ — run this from within the backend/ directory
 pip install -r requirements.txt
 ```
 
@@ -719,7 +720,7 @@ The `.github/workflows/` directory contains pipeline configuration covering:
 │   │       └── aws_client_factory.py # Centralized boto3 client construction with role support
 │   ├── tests/                        # pytest test suite with moto-based AWS mocking
 │   ├── scripts/                      # Operational scripts
-│   ├── requirements.txt
+│   ├── requirements.txt              # Python dependencies (scoped to backend only)
 │   └── Dockerfile
 │
 ├── frontend/
@@ -744,6 +745,9 @@ The `.github/workflows/` directory contains pipeline configuration covering:
 ├── docker-compose.yml
 └── Makefile                          # Developer workflow automation
 ```
+
+> **Why is `requirements.txt` inside `backend/` and not at the project root?**
+> This is a monorepo with separate `backend/` (Python) and `frontend/` (Node.js) directories. Keeping `requirements.txt` inside `backend/` scopes it to Python dependencies only, avoids conflicts with `package.json`, maps cleanly to Docker `COPY` contexts, and makes the dependency boundary explicit. Any command referencing it should use `backend/requirements.txt` from the project root, or run `pip install -r requirements.txt` from within the `backend/` directory.
 
 ---
 
