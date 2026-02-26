@@ -1,0 +1,56 @@
+# ── Python ────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg
+*.egg-info/
+dist/
+build/
+.eggs/
+.venv/
+venv/
+env/
+pip-wheel-metadata/
+
+# ── Coverage ──────────────────────────────────────────────────
+.coverage
+.coverage.*
+htmlcov/
+.pytest_cache/
+
+# ── Node / Frontend ───────────────────────────────────────────
+node_modules/
+frontend/dist/
+frontend/.vite/
+*.lock
+
+# ── Docker ────────────────────────────────────────────────────
+*.env.local
+
+# ── Environment (NEVER commit real secrets) ───────────────────
+.env
+!.env.example
+
+# ── IDE ───────────────────────────────────────────────────────
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# ── AWS ───────────────────────────────────────────────────────
+.aws/
+
+# ── Terraform ─────────────────────────────────────────────────
+infra/terraform/.terraform/
+infra/terraform/*.tfstate
+infra/terraform/*.tfstate.backup
+infra/terraform/*.tfvars
+
+# ── Runtime data (scan sessions, local store) ─────────────────
+scan_data.json
+*.scan.json
