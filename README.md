@@ -47,7 +47,7 @@ cp .env.example .env
 The `.env` file has two modes — pick one:
 
 **Mode A — Offline demo (no AWS account needed):**
-```env
+```en
 MOCK_AWS=true   # ← default, realistic mock data generated automatically
 ```
 
